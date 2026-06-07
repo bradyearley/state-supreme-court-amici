@@ -1,0 +1,155 @@
+---
+title: "Constitutional Discretion: Evidence from State Supreme Courts"
+author: "Brady Earley"
+date: "December 6, 2025"
+output: 
+ pdf_document:
+   toc: true
+   toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rvest)
+library(readxl)
+library(lubridate)
+library(knitr)
+amicus <- readRDS("Data/amicus.rds")
+case <- readRDS("Data/case.rds")
+const_texts <- read_excel("Data/const_texts.xlsx")
+```
+
+## Introduction
+
+### Models of Judicial Behavior
+
+In political science, there are two competing models for explaining judicial behavior. The first is the legal model which argues that judges impartially decide cases based on what the law says. The second is the attitudinal model which argues that judges decide cases based on their ideological views. Existing evidence supports both models in part, but is often focused solely on the United States Supreme Court. Moreover, existing studies tend to only look at the output of judicial opinions - which way the judge voted in a case - and tend to overlook the inputs like the law and facts involved in a case. 
+
+My project aims to address both of these shortcomings. First, I assemble a novel dataset of state supreme court cases. This expands the focus of the political science literature on judicial behavior beyond the United States Supreme Court and instead focuses on the fifty state supreme courts. My second contribution shifts attention to the law and facts of the underlying cases. My dataset includes the length of each state constitution which make up the law being interpreted in each state supreme court case I have collected. My dataset also includes a count of amicus briefs in each case. Amicus briefs can be filed on behalf of anyone with an interest in the case. These briefs typically provide additional facts that the court can use when deciding the case. Therefore, the dataset brings together both the law and facts in explaining state supreme court decisions.
+
+### Are Shorter State Constitutions Associated with More Judicial Discretion?
+
+With this data, I aim to test a theory of judicial discretion. If longer constitutions tend to be more detailed and less vague, judges would rely more on the law and less on the facts to decide constitutional cases. But if the law comes from a shorter, more ambiguous constitution, then judges will need to rely on more facts from amicus briefs to make their decisions. In other words, I hypothesize that more vague constitutions should be associated with more amicus briefs filed per state supreme court constitutional case.
+
+Whether judges rely more on the law or the facts in a constitutional case can inform debates over the legal and attitudinal models. In cases where judges rely more on the facts due to a vague law, they will have more discretion. If the attitudinal model is true, then future research could test these types of cases and see whether they tend to correlate more with the judge's ideological views than those where the law allows them less discretion.
+
+## Data
+
+My data comes from two sources. First, I obtained data on state constitutional text length from the [Council of State Governments Website](https://bookofthestates.org/tables/2022-1-3/). This includes length of each state constitution as of January 1, 2022. The longest state constitution is `r const_texts |> filter(words == max(words)) |> pluck(1)` with a length of `r as.integer(max(const_texts$words))` words. The shortest state constitution is `r const_texts |> filter(words == min(words)) |> pluck(1)` with a length of `r as.integer(min(const_texts$words))` words. The mean constitution length is `r as.integer(mean(const_texts$words))` words, the median length is `r as.integer(median(const_texts$words))` words, and the standard deviation is `r as.integer(sd(const_texts$words))`.
+
+The second data source was the [State Case Database](https://statecourtreport.org/state-case-database) provided by the [State Court Report](https://statecourtreport.org/). Scraped data from this site constitutes the `case` dataframe and the `amicus` dataframe. Each row in the `case` dataframe is a case contained in the state case database. `case` includes `r nrow(case)` state supreme court cases from 2021 to 2025 involving cases of ["significant state constitutional development"](https://statecourtreport.org/database-methodology). Each row in the `amicus` dataframe is an amicus brief that was filed in a state supreme court case in the database. The `amicus` dataframe includes `r nrow(amicus)` amicus briefs across `r length(unique(amicus$name))` cases and `r length(unique(amicus$state))` states (all except for Nebraska). This means that at least one amicus brief was filed in `r round((length(unique(amicus$name)))/(nrow(case)) * 100, 2)`% of cases.
+
+## Analysis
+We can start by observing how constitutional text, supreme court cases, and amicus briefs look across states. The following table shows the number of words in each state's current constitution, the number of significant constitutional cases decided by each state supreme court in the last five years, the number of amicus briefs filed in each case, the amicus briefs filed per case in each state. The table is ordered from states with the longest constitutions to the shortest.
+
+```{r table, message=FALSE}
+# create a variable to count amicus briefs in each case
+amicus_df <- amicus |>
+  group_by(name) |>
+  mutate(amicus_num = length(amicus))
+
+# subset data so each row is a case
+amicus_sub <- amicus_df |>
+  distinct(name, .keep_all = TRUE)
+
+# join with the case dataframe and replace missing values in amicus_num with 0
+case_amicus <- full_join(case, amicus_sub, by = "name")
+case_amicus <- case_amicus |>
+  mutate(amicus_num = ifelse(is.na(amicus_num) == TRUE, 0, amicus_num))
+
+# subset and adjust for disparities between the amicus and case data
+case_amicus[1088,c("date.x", "name", "state.x", "amicus_num")] <- 
+  list(ymd("2022-09-20"),"Ritter v. State", "Oklahoma", 2)
+
+case_amicus <- subset(case_amicus, select = c("date.x", "name", "state.x", "amicus_num"))
+
+case_amicus <- rename(case_amicus, date = date.x, state = state.x)
+
+# join all three dataframes together
+case_amicus_const <- full_join(case_amicus, const_texts, by = "state")
+
+# create new dataframe with case count
+t1 <- case_amicus_const |>
+  group_by(state) |>
+  mutate(case_num = length(name)) |>
+  mutate(amicus_state = sum(amicus_num))
+
+# subset to state level
+t1_sub <- t1 |>
+  distinct(state, .keep_all = TRUE)
+
+t1_sub <- t1_sub |> 
+  select(state, words, case_num, amicus_state) 
+
+# create briefs per case variable
+t1_sub <- t1_sub |>
+  mutate(amicus_per_case = round(amicus_state/case_num, 2))
+
+# create table
+t1_sub |>
+  arrange(desc(words)) |>
+  kable(
+    caption = "State Supreme Court Cases, Amicus Briefs, and Constitution Length",
+    col.names = c("State", "Words", "Cases", "Amicus Briefs", "Amicus Briefs per Case")
+  )
+```
+While the table gives a nice high-level view of the data, it does not provide much intuition about any relationship between the number of words in the state constitution and the amicus briefs per case. The plot below shows this relationship, revealing no obvious difference in amicus filings between states with long and short constitutions. The next plot removes Alabama as an outlier and shows a similar pattern.
+
+```{r plot, message=FALSE}
+# state abbreviations list ordered by state variable
+state_labs <- c("MA", "TX", "AR", "NM", "NH", 
+                "UT", "AZ", "CO", "OH", "WA", 
+                "MT", "OR", "NY", "WI", "LA", 
+                "ND", "IA", "NC", "OK", "CT", 
+                "DE", "CA", "PA", "WY", "MO", 
+                "IL", "HI", "ME", "TN", "GA",
+                "KS", "AL", "MI", "SC", "NJ", 
+                "KY", "VA", "FL", "IN", "NE", 
+                "WV", "MN", "SD", "ID", "MS", 
+                "AL", "NV", "MD", "IA", "VT")
+ggplot(t1_sub,
+       aes(x = amicus_per_case, y = words)) +
+  geom_point() +
+  geom_smooth() + 
+  labs(title = "State Constitution Length and Amicus Briefs per Case",
+       x = "Amicus Briefs Filed per State Supreme Court Case",
+       y = "Words in State Constitution") +
+  geom_text(aes(label = state_labs),
+            nudge_x = 0.085) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+
+```
+
+```{r removing outlier plot, message=FALSE}
+t1_min_al <- t1_sub |>
+  filter(state != "Alabama")
+
+state_labs_min_al <- c("MA", "TX", "AR", "NM", "NH", 
+                "UT", "AZ", "CO", "OH", "WA", 
+                "MT", "OR", "NY", "WI", "LA", 
+                "ND", "IA", "NC", "OK", "CT", 
+                "DE", "CA", "PA", "WY", "MO", 
+                "IL", "HI", "ME", "TN", "GA",
+                "KS", "AL", "MI", "SC", "NJ", 
+                "KY", "VA", "FL", "IN", "NE", 
+                "WV", "MN", "SD", "ID", "MS", 
+                "NV", "MD", "IA", "VT")
+
+ggplot(t1_min_al,
+       aes(x = amicus_per_case, y = words)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "State Constitution Length and Amicus Briefs per Case",
+       x = "Amicus Briefs Filed per State Supreme Court Case",
+       y = "Words in State Constitution",
+       caption = "Note: Alabama removed as outlier") +
+  geom_text(aes(label = state_labs_min_al),
+            nudge_x = 0.085)
+
+```
+
+## Conclusion
+I hypothesized that there was a relationship between the length of state constitutions and the discretion of state supreme court justices when deciding constitutional cases. My analysis used the amicus briefs filed in state supreme court constitutional cases as a proxy for the perceived discretion from the public. As indicated by the figures above, there is no clear relationship between constitutional length and amicus brief filings. 
+
+While the evidence runs counter to my hypothesis, the results come with important caveats and directions for future research. First, the data is limited to just fives years (2021 - 2025) and just over 1,000 cases. This may be too short a time horizon to pick up meaningful trends. Moreover, these cases are selected from the broader pool of all constitutional cases heard at state supreme courts. It well may be that these cases have already arisen under the most ambiguous or vague parts of each state constitution. Future research might compare the difference between the results in these cases and all other state constitutional cases. This can help to make progress on the evaluation of judicial discretion and thus better test models of judicial behavior.
